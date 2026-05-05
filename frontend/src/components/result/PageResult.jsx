@@ -1,8 +1,25 @@
+import { useState, useCallback } from 'react'
 import { Icon } from '../common/Icon'
 import { StoryViewer } from './StoryViewer'
 import { TEMPLATES } from '../../constants'
 
-export function PageResult({ record, onBack, onNew, onNavigate }) {
+export function PageResult({ record, onBack, onNew, onNavigate, onUpdateRecord, showToast }) {
+  const [currentRecord, setCurrentRecord] = useState(record)
+
+  const handleResultUpdate = useCallback((updated) => {
+    const merged = {
+      ...currentRecord,
+      result: updated.result || updated,
+      currentVersion: updated.currentVersion || currentRecord.currentVersion,
+    }
+    setCurrentRecord(merged)
+    onUpdateRecord?.(merged)
+  }, [currentRecord, onUpdateRecord])
+
+  const handleRatingChange = useCallback((newRating) => {
+    setCurrentRecord((prev) => ({ ...prev, rating: newRating }))
+  }, [])
+
   return (
     <div className="page page-result">
       <div className="result-header">
@@ -11,14 +28,17 @@ export function PageResult({ record, onBack, onNew, onNavigate }) {
             <Icon name="clock" size={14} /> 历史记录
           </button>
           <div className="result-title-group">
-            <h2 className="result-product-name">{record.productName}</h2>
+            <h2 className="result-product-name">{currentRecord.productName}</h2>
             <div className="result-meta">
-              {record.template && (
+              {currentRecord.template && (
                 <span className="result-template">
-                  {TEMPLATES.find(t => t.id === record.template)?.icon} {TEMPLATES.find(t => t.id === record.template)?.name}
+                  {TEMPLATES.find(t => t.id === currentRecord.template)?.icon} {TEMPLATES.find(t => t.id === currentRecord.template)?.name}
                 </span>
               )}
-              <span className="result-date">{new Date(record.createdAt).toLocaleString('zh-CN')}</span>
+              <span className="result-date">{new Date(currentRecord.createdAt).toLocaleString('zh-CN')}</span>
+              {currentRecord.currentVersion > 1 && (
+                <span className="result-version">v{currentRecord.currentVersion}</span>
+              )}
             </div>
           </div>
         </div>
@@ -27,7 +47,16 @@ export function PageResult({ record, onBack, onNew, onNavigate }) {
           新建创作
         </button>
       </div>
-      <StoryViewer result={record.result} productName={record.productName} />
+      <StoryViewer
+        result={currentRecord.result}
+        productName={currentRecord.productName}
+        storyId={currentRecord.id}
+        rating={currentRecord.rating}
+        currentVersion={currentRecord.currentVersion}
+        onResultUpdate={handleResultUpdate}
+        onRatingChange={handleRatingChange}
+        showToast={showToast}
+      />
     </div>
   )
 }

@@ -24,6 +24,10 @@ export function Navbar({ page, historyCount, onNavigate }) {
             <span>历史</span>
             {historyCount > 0 && <span className="nav-badge">{historyCount}</span>}
           </button>
+          <button className={`nav-link ${page === 'dashboard' ? 'nav-link--active' : ''}`} onClick={() => onNavigate('dashboard')}>
+            <Icon name="chart" size={16} />
+            <span>看板</span>
+          </button>
         </div>
         <div className="nav-shortcuts" title="快捷键: Ctrl+N 新建, Ctrl+H 历史">
           <Icon name="lightbulb" size={14} />

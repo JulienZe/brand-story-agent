@@ -1,4 +1,4 @@
-export function QualityScore({ score, label }) {
+export function QualityScore({ score, label, grade: externalGrade }) {
   const clampedScore = Math.min(100, Math.max(0, score || 0))
   const getGrade = (s) => {
     if (s >= 90) return { grade: 'A', color: '#2D6A4F' }
@@ -6,7 +6,8 @@ export function QualityScore({ score, label }) {
     if (s >= 60) return { grade: 'C', color: '#B8860B' }
     return { grade: 'D', color: '#9B2C2C' }
   }
-  const { grade, color } = getGrade(clampedScore)
+  const { grade: computedGrade, color } = getGrade(clampedScore)
+  const grade = externalGrade || computedGrade
   return (
     <div className="quality-score">
       <div className="quality-score-ring">

@@ -445,31 +445,59 @@ export class EnhancedContentGenerator {
    * 解析响应
    */
   _parseResponse(content, options) {
-    // 如果期望JSON格式
     if (options.expectJson !== false) {
       try {
-        // 尝试提取JSON
-        const jsonMatch = content.match(/\{[\s\S]*\}/);
+        let jsonStr = content
+        const codeBlockMatch = content.match(/```(?:json)?\s*\n?([\s\S]*?)\n?```/)
+        if (codeBlockMatch) {
+          jsonStr = codeBlockMatch[1].trim()
+        }
+        const jsonMatch = jsonStr.match(/\{[\s\S]*\}/)
         if (jsonMatch) {
-          const parsed = JSON.parse(jsonMatch[0]);
-          
-          // 验证响应
+          const parsed = JSON.parse(jsonMatch[0])
           if (options.schema) {
-            const validation = this.validator.validate(parsed, options.schema);
+            const validation = this.validator.validate(parsed, options.schema)
             if (!validation.valid) {
-              console.warn('[ContentGenerator] 响应验证失败:', validation.errors);
+              console.warn('[ContentGenerator] 响应验证失败:', validation.errors)
+              const repaired = this.validator.repair(parsed, options.schema)
+              return repaired
             }
           }
-          
-          return parsed;
+          return parsed
         }
       } catch (error) {
-        console.warn('[ContentGenerator] JSON解析失败:', error.message);
+        console.warn('[ContentGenerator] JSON解析失败:', error.message)
+        const repaired = this._tryRepairJson(content)
+        if (repaired) return repaired
       }
     }
-    
-    // 返回原始内容
-    return { content };
+    return { content }
+  }
+
+  _tryRepairJson(content) {
+    try {
+      let text = content.trim()
+      const codeBlockMatch = text.match(/```(?:json)?\s*\n?([\s\S]*?)\n?```/)
+      if (codeBlockMatch) text = codeBlockMatch[1].trim()
+      const start = text.indexOf('{')
+      const end = text.lastIndexOf('}')
+      if (start === -1 || end === -1 || end <= start) return null
+      let jsonStr = text.substring(start, end + 1)
+      jsonStr = jsonStr.replace(/,\s*([}\]])/g, '$1')
+      jsonStr = jsonStr.replace(/'/g, '"')
+      jsonStr = jsonStr.replace(/(\w+)\s*:/g, '"$1":')
+      jsonStr = jsonStr.replace(/"(\w+)"\s*:\s*"([^"]*?)"/g, (m, k, v) => `"${k}":"${v}"`)
+      const openBraces = (jsonStr.match(/\{/g) || []).length
+      const closeBraces = (jsonStr.match(/\}/g) || []).length
+      if (openBraces > closeBraces) {
+        jsonStr += '}'.repeat(openBraces - closeBraces)
+      }
+      const parsed = JSON.parse(jsonStr)
+      console.log('[ContentGenerator] JSON修复成功')
+      return parsed
+    } catch {
+      return null
+    }
   }
 
   /**
@@ -772,21 +800,93 @@ class CostTracker {
  */
 class ResponseValidator {
   validate(response, schema) {
-    const errors = [];
+    const errors = []
     
     for (const [key, rule] of Object.entries(schema)) {
       if (rule.required && !response[key]) {
-        errors.push(`缺少必需字段: ${key}`);
+        errors.push(`缺少必需字段: ${key}`)
       }
       
       if (rule.type && response[key] !== undefined && typeof response[key] !== rule.type) {
-        errors.push(`字段 ${key} 类型错误: 期望 ${rule.type}, 实际 ${typeof response[key]}`);
+        errors.push(`字段 ${key} 类型错误: 期望 ${rule.type}, 实际 ${typeof response[key]}`)
+      }
+
+      if (rule.minLength && typeof response[key] === 'string' && response[key].length < rule.minLength) {
+        errors.push(`字段 ${key} 长度不足: 最少 ${rule.minLength} 字符`)
       }
     }
     
     return {
       valid: errors.length === 0,
       errors
-    };
+    }
+  }
+
+  repair(response, schema) {
+    const repaired = { ...response }
+    
+    for (const [key, rule] of Object.entries(schema)) {
+      if (rule.required && !repaired[key]) {
+        repaired[key] = rule.defaultValue !== undefined ? rule.defaultValue : this._getDefaultForType(rule.type)
+      }
+      
+      if (rule.type && repaired[key] !== undefined && typeof repaired[key] !== rule.type) {
+        repaired[key] = this._coerceType(repaired[key], rule.type, rule.defaultValue)
+      }
+
+      if (rule.sanitize && typeof repaired[key] === 'string') {
+        repaired[key] = this._sanitizeString(repaired[key])
+      }
+    }
+    
+    console.log('[ResponseValidator] 自动修复完成')
+    return repaired
+  }
+
+  _getDefaultForType(type) {
+    switch (type) {
+      case 'string': return ''
+      case 'number': return 0
+      case 'boolean': return false
+      case 'object': return {}
+      case 'array': return []
+      default: return null
+    }
+  }
+
+  _coerceType(value, targetType, defaultValue) {
+    try {
+      switch (targetType) {
+        case 'string':
+          return typeof value === 'object' ? JSON.stringify(value) : String(value)
+        case 'number':
+          const num = Number(value)
+          return isNaN(num) ? (defaultValue || 0) : num
+        case 'boolean':
+          return Boolean(value)
+        case 'object':
+          if (typeof value === 'string') {
+            try { return JSON.parse(value) } catch { return defaultValue || {} }
+          }
+          return defaultValue || {}
+        case 'array':
+          if (typeof value === 'string') {
+            try { return JSON.parse(value) } catch { return defaultValue || [] }
+          }
+          if (Array.isArray(value)) return value
+          return defaultValue || []
+        default:
+          return defaultValue !== undefined ? defaultValue : value
+      }
+    } catch {
+      return defaultValue !== undefined ? defaultValue : this._getDefaultForType(targetType)
+    }
+  }
+
+  _sanitizeString(str) {
+    return str
+      .replace(/[\x00-\x08\x0B\x0C\x0E-\x1F]/g, '')
+      .replace(/\s{3,}/g, '\n\n')
+      .trim()
   }
 }

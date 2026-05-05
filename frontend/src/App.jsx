@@ -1,12 +1,13 @@
 import { useState, useEffect, useCallback } from 'react'
 import './App.css'
 import { useLocalStorage, useToast } from './hooks'
-import { Toast, OnboardingGuide } from './components/common'
+import { Toast, OnboardingGuide, ErrorBoundary } from './components/common'
 import { Navbar, Footer } from './components/layout/Navbar'
 import { PageHome } from './components/home/PageHome'
 import { PageCreate } from './components/create/PageCreate'
 import { PageResult } from './components/result/PageResult'
 import { PageHistory } from './components/history/PageHistory'
+import { PageDashboard } from './components/dashboard/PageDashboard'
 import * as api from './services/api'
 
 function App() {
@@ -14,6 +15,7 @@ function App() {
   const [history, setHistory] = useLocalStorage('brand-story-history', [])
   const [favorites, setFavorites] = useLocalStorage('brand-story-favorites', [])
   const [currentRecord, setCurrentRecord] = useState(null)
+  const [refineTarget, setRefineTarget] = useState(null)
   const { toast, showToast, hideToast } = useToast()
   const [showOnboarding, setShowOnboarding] = useState(() => {
     try { return !localStorage.getItem('brand-story-onboarded') } catch { return true }
@@ -79,6 +81,8 @@ function App() {
 
   const navigate = useCallback((target, data) => {
     if (target === 'result' && data) setCurrentRecord(data)
+    if (target === 'create' && data) setRefineTarget(data)
+    else if (target === 'create') setRefineTarget(null)
     setPage(target)
     window.scrollTo(0, 0)
   }, [])
@@ -103,6 +107,7 @@ function App() {
   }, [navigate, page])
 
   return (
+    <ErrorBoundary>
     <div className="app">
       {toast && <Toast key={toast.key} message={toast.message} type={toast.type} onClose={hideToast} />}
       {showOnboarding && <OnboardingGuide onClose={closeOnboarding} />}
@@ -110,14 +115,27 @@ function App() {
       <Navbar page={page} historyCount={history.length} onNavigate={navigate} />
 
       <main className="main">
+        <ErrorBoundary fallback={(err, reset) => (
+          <div className="error-page-fallback">
+            <Icon name="alert" size={32} />
+            <h3>页面加载出错</h3>
+            <p>{err?.message || '未知错误'}</p>
+            <button className="btn btn-primary btn-sm" onClick={reset}>重试</button>
+          </div>
+        )}>
         {page === 'home' && <PageHome onNavigate={navigate} historyCount={history.length} />}
-        {page === 'create' && <PageCreate onCreate={handleCreate} onNavigate={navigate} />}
+        {page === 'create' && <PageCreate onCreate={handleCreate} onNavigate={navigate} history={history} refineTarget={refineTarget} />}
         {page === 'result' && currentRecord && (
           <PageResult
             record={currentRecord}
             onBack={() => navigate('history')}
             onNew={() => navigate('create')}
             onNavigate={navigate}
+            onUpdateRecord={(updated) => {
+              setCurrentRecord(updated)
+              setHistory(prev => prev.map(h => h.id === updated.id ? updated : h))
+            }}
+            showToast={showToast}
           />
         )}
         {page === 'history' && (
@@ -126,14 +144,20 @@ function App() {
             favorites={favorites}
             onToggleFavorite={toggleFavorite}
             onSelect={(r) => navigate('result', r)}
+            onRefine={(r) => navigate('create', r)}
             onDelete={handleDelete}
             onNavigate={navigate}
           />
         )}
+        {page === 'dashboard' && (
+          <PageDashboard onNavigate={navigate} />
+        )}
+        </ErrorBoundary>
       </main>
 
       <Footer />
     </div>
+    </ErrorBoundary>
   )
 }
 

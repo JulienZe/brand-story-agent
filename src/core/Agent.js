@@ -10,6 +10,38 @@ import { QualityValidator } from './QualityValidator.js';
 import config, { validateConfig } from '../config/index.js';
 
 export class BrandStoryAgent {
+  static STAGE_SCHEMAS = {
+    productAnalysis: {
+      valueProposition: { type: 'object', required: true, defaultValue: {} },
+      differentiation: { type: 'object', required: false, defaultValue: {} },
+      keyFeatures: { type: 'array', required: false, defaultValue: [] },
+      coreBenefits: { type: 'object', required: false, defaultValue: {} }
+    },
+    userInsight: {
+      persona: { type: 'object', required: true, defaultValue: {} },
+      painPoints: { type: 'array', required: false, defaultValue: [] },
+      emotionalNeeds: { type: 'array', required: false, defaultValue: [] },
+      motivationTriggers: { type: 'array', required: false, defaultValue: [] }
+    },
+    sceneDesign: {
+      scenarios: { type: 'array', required: true, defaultValue: [] },
+      emotionalConnections: { type: 'array', required: false, defaultValue: [] },
+      sensoryDetails: { type: 'array', required: false, defaultValue: [] }
+    },
+    storyCreation: {
+      content: { type: 'string', required: true, defaultValue: '', minLength: 100, sanitize: true },
+      storyContent: { type: 'string', required: false, defaultValue: '', sanitize: true },
+      emotionalResonance: { type: 'string', required: false, defaultValue: '' },
+      narrativeArc: { type: 'string', required: false, defaultValue: '' }
+    },
+    contentOptimization: {
+      content: { type: 'string', required: true, defaultValue: '', minLength: 100, sanitize: true },
+      suggestions: { type: 'array', required: false, defaultValue: [] },
+      keyMessages: { type: 'array', required: false, defaultValue: [] },
+      emotionalTriggers: { type: 'array', required: false, defaultValue: [] }
+    }
+  };
+
   constructor(configOverrides = {}) {
     validateConfig();
     
@@ -122,7 +154,8 @@ export class BrandStoryAgent {
 
     const analysis = await this.contentGenerator.generate(prompt, {
       temperature: 0.3,
-      maxTokens: 1500
+      maxTokens: 1500,
+      schema: BrandStoryAgent.STAGE_SCHEMAS.productAnalysis
     });
 
     return {
@@ -150,7 +183,8 @@ export class BrandStoryAgent {
 
     const insight = await this.contentGenerator.generate(prompt, {
       temperature: 0.4,
-      maxTokens: 1500
+      maxTokens: 1500,
+      schema: BrandStoryAgent.STAGE_SCHEMAS.userInsight
     });
 
     return {
@@ -178,7 +212,8 @@ export class BrandStoryAgent {
 
     const scenes = await this.contentGenerator.generate(prompt, {
       temperature: 0.6,
-      maxTokens: 2000
+      maxTokens: 2000,
+      schema: BrandStoryAgent.STAGE_SCHEMAS.sceneDesign
     });
 
     return {
@@ -206,11 +241,28 @@ export class BrandStoryAgent {
 
     const story = await this.contentGenerator.generate(prompt, {
       temperature: 0.7,
-      maxTokens: 3000
+      maxTokens: 3000,
+      schema: BrandStoryAgent.STAGE_SCHEMAS.storyCreation
     });
 
+    const storyContent = story.content || story.storyContent || '';
+    if (storyContent && typeof storyContent === 'string') {
+      const chars = storyContent.split('');
+      const chunkSize = Math.max(1, Math.ceil(chars.length / 60));
+      for (let i = 0; i < chars.length; i += chunkSize) {
+        const chunk = chars.slice(i, i + chunkSize).join('');
+        this.workflow.emit('stage:text', {
+          stage: 'storyCreation',
+          text: chunk,
+          progress: Math.min(100, Math.round((i / chars.length) * 100)),
+          timestamp: Date.now(),
+        });
+        await new Promise(r => setTimeout(r, 30));
+      }
+    }
+
     return {
-      storyContent: story.content,
+      storyContent: storyContent,
       emotionalResonance: story.emotionalResonance,
       narrativeArc: story.narrativeArc
     };
@@ -232,7 +284,8 @@ export class BrandStoryAgent {
 
     const optimized = await this.contentGenerator.generate(prompt, {
       temperature: 0.5,
-      maxTokens: 3000
+      maxTokens: 3000,
+      schema: BrandStoryAgent.STAGE_SCHEMAS.contentOptimization
     });
 
     // 质量验证
@@ -354,6 +407,11 @@ export class BrandStoryAgent {
       },
       
       quality: validation || { passed: true },
+      
+      contentScore: this.validator.scoreContent(
+        this._cleanContent(finalContent || storyContent || ''),
+        { brandTone: result.brandPositioning?.tone || result.options?.defaultTone }
+      ),
       
       stats: this.contentGenerator.getStats()
     };
@@ -495,6 +553,70 @@ export class BrandStoryAgent {
         psychographics: {}
       }
     });
+  }
+
+  async regenerateSection(existingResult, section, instruction) {
+    const sectionNames = {
+      productValue: '产品价值',
+      userProfile: '用户画像',
+      scenarios: '使用场景',
+      brandStory: '品牌故事',
+    }
+    const sectionLabel = sectionNames[section] || section
+
+    const sectionData = existingResult[section]
+    const contextInfo = {
+      productValue: existingResult.productValue,
+      userProfile: existingResult.userProfile,
+    }
+
+    const prompt = this.promptTemplate.render('regenerateSection', {
+      sectionName: sectionLabel,
+      sectionContent: JSON.stringify(sectionData, null, 2),
+      instruction: instruction || `请重新生成${sectionLabel}部分，保持与其他部分的一致性`,
+      productContext: JSON.stringify({
+        coreValue: contextInfo.productValue?.coreValue,
+        persona: contextInfo.userProfile?.persona,
+      }, null, 2),
+    })
+
+    const result = await this.contentGenerator.generate(prompt, {
+      temperature: 0.6,
+      maxTokens: 2000,
+    })
+
+    return result.section || result
+  }
+
+  async refineContent(existingResult, instruction, sections) {
+    const targetSections = sections || ['productValue', 'userProfile', 'scenarios', 'brandStory']
+
+    const prompt = this.promptTemplate.render('refineContent', {
+      currentContent: JSON.stringify(
+        Object.fromEntries(targetSections.map(s => [s, existingResult[s]])),
+        null,
+        2
+      ),
+      instruction,
+      productContext: JSON.stringify({
+        productName: existingResult.metadata || '',
+        coreValue: existingResult.productValue?.coreValue,
+      }, null, 2),
+    })
+
+    const refined = await this.contentGenerator.generate(prompt, {
+      temperature: 0.5,
+      maxTokens: 3000,
+    })
+
+    const merged = { ...existingResult }
+    if (refined.productValue) merged.productValue = { ...merged.productValue, ...refined.productValue }
+    if (refined.userProfile) merged.userProfile = { ...merged.userProfile, ...refined.userProfile }
+    if (refined.scenarios) merged.scenarios = refined.scenarios
+    if (refined.brandStory) merged.brandStory = { ...merged.brandStory, ...refined.brandStory }
+    if (refined.emotionalConnections) merged.emotionalConnections = { ...merged.emotionalConnections, ...refined.emotionalConnections }
+
+    return merged
   }
 }
 

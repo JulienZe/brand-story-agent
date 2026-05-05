@@ -31,6 +31,10 @@ export class WorkflowEngine {
     }
   }
 
+  emit(event, data) {
+    this._emit(event, data);
+  }
+
   /**
    * 添加工作流阶段
    */

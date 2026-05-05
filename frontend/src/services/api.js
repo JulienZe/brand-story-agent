@@ -126,6 +126,52 @@ export async function getFavorites() {
   return request('/api/favorites', { retries: 1 })
 }
 
+export async function getStoryVersions(id) {
+  return request(`/api/stories/${id}/versions`, { retries: 1 })
+}
+
+export async function getStoryVersion(id, version) {
+  return request(`/api/stories/${id}/versions/${version}`, { retries: 1 })
+}
+
+export async function updateStoryContent(id, result) {
+  return request(`/api/stories/${id}/content`, {
+    method: 'PATCH',
+    body: JSON.stringify({ result }),
+    retries: 0,
+  })
+}
+
+export async function updateStoryRating(id, rating) {
+  return request(`/api/stories/${id}/rating`, {
+    method: 'PATCH',
+    body: JSON.stringify({ rating }),
+    retries: 0,
+  })
+}
+
+export async function regenerateSection(id, section, instruction) {
+  return request(`/api/stories/${id}/regenerate/section`, {
+    method: 'POST',
+    body: JSON.stringify({ section, instruction }),
+    timeout: 120000,
+    retries: 1,
+  })
+}
+
+export async function refineStory(id, instruction, sections) {
+  return request(`/api/stories/${id}/refine`, {
+    method: 'POST',
+    body: JSON.stringify({ instruction, sections }),
+    timeout: 120000,
+    retries: 1,
+  })
+}
+
+export async function getDashboard() {
+  return request('/api/dashboard', { retries: 1 })
+}
+
 export function createStorySSE({ productName, productDesc, productFeatures, targetUser, tone }, callbacks = {}) {
   const params = new URLSearchParams()
   params.set('productName', productName)
@@ -147,6 +193,10 @@ export function createStorySSE({ productName, productDesc, productFeatures, targ
 
   eventSource.addEventListener('stage:complete', (e) => {
     callbacks.onStageComplete?.(JSON.parse(e.data))
+  })
+
+  eventSource.addEventListener('stage:text', (e) => {
+    callbacks.onStageText?.(JSON.parse(e.data))
   })
 
   eventSource.addEventListener('stage:error', (e) => {

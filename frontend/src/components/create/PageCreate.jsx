@@ -2,22 +2,26 @@ import { useState, useRef, useCallback } from 'react'
 import { Icon } from '../common/Icon'
 import { CharCount } from '../common/CharCount'
 import { TEMPLATES, TONES, STEPS, WORKFLOW_STAGES } from '../../constants'
-import { createStory, createStorySSE } from '../../services/api'
+import { createStory, createStorySSE, refineStory } from '../../services/api'
 
-export function PageCreate({ onCreate, onNavigate }) {
-  const [step, setStep] = useState(1)
-  const [template, setTemplate] = useState(null)
-  const [productName, setProductName] = useState('')
-  const [productDesc, setProductDesc] = useState('')
+export function PageCreate({ onCreate, onNavigate, history, refineTarget }) {
+  const [step, setStep] = useState(refineTarget ? 2 : 1)
+  const [template, setTemplate] = useState(refineTarget?.template || null)
+  const [productName, setProductName] = useState(refineTarget?.productName || '')
+  const [productDesc, setProductDesc] = useState(refineTarget?.productDesc || '')
   const [productFeatures, setProductFeatures] = useState('')
-  const [targetUser, setTargetUser] = useState('')
-  const [tone, setTone] = useState('warm_professional')
+  const [targetUser, setTargetUser] = useState(refineTarget?.targetUser || '')
+  const [tone, setTone] = useState(refineTarget?.tone || 'warm_professional')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState(null)
   const [progress, setProgress] = useState(0)
   const [progressLabel, setProgressLabel] = useState('')
   const [progressStages, setProgressStages] = useState([])
   const [touched, setTouched] = useState({})
+  const [isRefineMode, setIsRefineMode] = useState(!!refineTarget)
+  const [refineInstruction, setRefineInstruction] = useState('')
+  const [showHistoryPicker, setShowHistoryPicker] = useState(false)
+  const [streamingText, setStreamingText] = useState('')
   const sseRef = useRef(null)
 
   const nameError = touched.name && !productName.trim() ? '请输入产品名称' : ''
@@ -90,6 +94,7 @@ export function PageCreate({ onCreate, onNavigate }) {
     setProgress(0)
     setProgressStages([])
     setProgressLabel('连接AI服务...')
+    setStreamingText('')
 
     const features = productFeatures.split('\n').filter(f => f.trim())
 
@@ -111,6 +116,9 @@ export function PageCreate({ onCreate, onNavigate }) {
         onStageComplete: (data) => {
           setProgress(data.progress)
           setProgressStages(prev => prev.map(s => s.status === 'active' ? { ...s, status: 'done' } : s))
+        },
+        onStageText: (data) => {
+          setStreamingText(prev => prev + data.text)
         },
         onStageError: (data) => {
           setProgressStages(prev => prev.map(s =>
@@ -144,6 +152,62 @@ export function PageCreate({ onCreate, onNavigate }) {
       }
     )
   }, [productName, productDesc, productFeatures, targetUser, tone, template, onCreate, runFallback])
+
+  const handleRefineSubmit = useCallback(async () => {
+    if (!refineTarget?.id || !refineInstruction.trim()) return
+    setLoading(true)
+    setError(null)
+    setStep(3)
+    setProgress(0)
+    setProgressStages([])
+    setProgressLabel('AI优化中...')
+
+    const stageTimer = setInterval(() => {
+      setProgress(prev => {
+        if (prev >= 90) { clearInterval(stageTimer); return prev }
+        return prev + Math.random() * 15
+      })
+    }, 2000)
+
+    try {
+      const updated = await refineStory(refineTarget.id, refineInstruction)
+      clearInterval(stageTimer)
+      setProgress(100)
+      setProgressLabel('优化完成')
+
+      setTimeout(() => {
+        onCreate({
+          id: updated.id || refineTarget.id,
+          productName: updated.productName || productName,
+          productDesc: updated.productDesc || productDesc,
+          template: updated.template || template,
+          targetUser: updated.targetUser || targetUser,
+          tone: updated.tone || tone,
+          result: updated.result,
+          currentVersion: updated.currentVersion,
+          createdAt: new Date().toISOString(),
+        })
+        setStep(4)
+      }, 600)
+    } catch (err) {
+      clearInterval(stageTimer)
+      setError(err.message || '优化失败，请重试')
+      setStep(2)
+    } finally {
+      setLoading(false)
+    }
+  }, [refineTarget, refineInstruction, productName, productDesc, template, targetUser, tone, onCreate])
+
+  const handleSelectHistory = useCallback((item) => {
+    setProductName(item.productName)
+    setProductDesc(item.productDesc || '')
+    setTargetUser(item.targetUser || '')
+    setTemplate(item.template || null)
+    setTone(item.tone || 'warm_professional')
+    setIsRefineMode(true)
+    setShowHistoryPicker(false)
+    setStep(2)
+  }, [])
 
   const canProceed = step === 1 ? !!template : (productName.trim() && productDesc.trim())
 
@@ -189,6 +253,14 @@ export function PageCreate({ onCreate, onNavigate }) {
                 </button>
               ))}
             </div>
+            {history && history.length > 0 && (
+              <div className="refine-entry">
+                <div className="refine-entry-divider"><span>或者</span></div>
+                <button className="btn btn-outline btn-sm refine-entry-btn" onClick={() => setShowHistoryPicker(true)}>
+                  <Icon name="star" size={14} /> 基于已有创作优化
+                </button>
+              </div>
+            )}
             <div className="step-actions">
               <button className="btn btn-ghost" onClick={() => onNavigate('home')}>取消</button>
               <button className="btn btn-primary" disabled={!canProceed} onClick={() => setStep(2)}>
@@ -201,9 +273,19 @@ export function PageCreate({ onCreate, onNavigate }) {
         {step === 2 && (
           <div className="step-panel">
             <div className="step-panel-header">
-              <h3>描述你的产品</h3>
-              <p>越详细的描述，AI创作的内容越精准</p>
+              <h3>{isRefineMode ? '优化已有创作' : '描述你的产品'}</h3>
+              <p>{isRefineMode ? '在已有内容基础上，通过AI指令进行优化迭代' : '越详细的描述，AI创作的内容越精准'}</p>
             </div>
+            {isRefineMode && refineTarget && (
+              <div className="refine-source-card">
+                <div className="refine-source-label"><Icon name="star" size={12} /> 基于创作</div>
+                <div className="refine-source-name">{refineTarget.productName}</div>
+                <div className="refine-source-meta">
+                  {refineTarget.currentVersion > 1 && <span>v{refineTarget.currentVersion}</span>}
+                  <span>{new Date(refineTarget.createdAt).toLocaleDateString('zh-CN')}</span>
+                </div>
+              </div>
+            )}
             <div className="form-card">
               <div className="form-group">
                 <label className="form-label">产品名称 <span className="required">*</span></label>
@@ -270,6 +352,22 @@ export function PageCreate({ onCreate, onNavigate }) {
                 </div>
               </div>
             </div>
+            {isRefineMode && (
+              <div className="form-card refine-instruction-card">
+                <div className="form-group">
+                  <label className="form-label">优化指令 <span className="required">*</span></label>
+                  <textarea
+                    className="input textarea"
+                    value={refineInstruction}
+                    onChange={(e) => setRefineInstruction(e.target.value)}
+                    placeholder="描述你希望如何优化，例如：让品牌故事更有感染力、增加更多数据支撑、调整语调更专业..."
+                    rows={4}
+                    maxLength={500}
+                  />
+                  <CharCount current={refineInstruction.length} max={500} />
+                </div>
+              </div>
+            )}
             {error && (
               <div className="alert">
                 <span className="alert-icon">!</span>
@@ -280,10 +378,16 @@ export function PageCreate({ onCreate, onNavigate }) {
               </div>
             )}
             <div className="step-actions">
-              <button className="btn btn-ghost" onClick={() => setStep(1)}>上一步</button>
-              <button className="btn btn-primary" disabled={!canProceed || loading} onClick={handleSubmit}>
-                <Icon name="sparkles" size={16} /> 开始创作
-              </button>
+              <button className="btn btn-ghost" onClick={() => { setIsRefineMode(false); setStep(1) }}>上一步</button>
+              {isRefineMode && refineTarget ? (
+                <button className="btn btn-primary" disabled={!refineInstruction.trim() || loading} onClick={handleRefineSubmit}>
+                  <Icon name="star" size={16} /> {loading ? '优化中...' : '开始优化'}
+                </button>
+              ) : (
+                <button className="btn btn-primary" disabled={!canProceed || loading} onClick={handleSubmit}>
+                  <Icon name="sparkles" size={16} /> 开始创作
+                </button>
+              )}
             </div>
           </div>
         )}
@@ -314,11 +418,60 @@ export function PageCreate({ onCreate, onNavigate }) {
                   ))}
                 </div>
               )}
+              {streamingText && (
+                <div className="streaming-preview">
+                  <div className="streaming-preview-header">
+                    <Icon name="book" size={12} /> 品牌故事实时预览
+                  </div>
+                  <div className="streaming-preview-content">
+                    {streamingText}
+                    <span className="streaming-cursor">▌</span>
+                  </div>
+                </div>
+              )}
               <p className="loading-hint">通常需要20-40秒，请耐心等待</p>
             </div>
           </div>
         )}
       </div>
+
+      {showHistoryPicker && (
+        <div className="modal-overlay" onClick={() => setShowHistoryPicker(false)}>
+          <div className="modal-content modal-content--lg" onClick={(e) => e.stopPropagation()}>
+            <div className="modal-header">
+              <h3>选择已有创作</h3>
+              <button className="btn btn-ghost btn-xs" onClick={() => setShowHistoryPicker(false)}>✕</button>
+            </div>
+            <div className="modal-body">
+              <p className="modal-hint">选择一条已有的创作记录，在它的基础上进行优化迭代</p>
+              <div className="history-picker-list">
+                {(history || []).slice(0, 20).map((h) => (
+                  <button
+                    key={h.id}
+                    className="history-picker-item"
+                    onClick={() => handleSelectHistory(h)}
+                  >
+                    <div className="history-picker-icon">
+                      {TEMPLATES.find(t => t.id === h.template)?.icon || '📝'}
+                    </div>
+                    <div className="history-picker-body">
+                      <div className="history-picker-name">{h.productName}</div>
+                      <div className="history-picker-meta">
+                        <span>{new Date(h.createdAt).toLocaleDateString('zh-CN')}</span>
+                        {h.result?.brandStory?.wordCount > 0 && <span>{h.result.brandStory.wordCount}字</span>}
+                        {h.currentVersion > 1 && <span>v{h.currentVersion}</span>}
+                      </div>
+                    </div>
+                  </button>
+                ))}
+                {(!history || history.length === 0) && (
+                  <div className="history-picker-empty">暂无创作记录</div>
+                )}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

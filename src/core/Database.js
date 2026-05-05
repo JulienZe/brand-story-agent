@@ -25,6 +25,8 @@ db.exec(`
     tone TEXT,
     result TEXT NOT NULL,
     is_favorite INTEGER DEFAULT 0,
+    rating INTEGER DEFAULT 0,
+    current_version INTEGER DEFAULT 1,
     created_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
     updated_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime'))
   );
@@ -42,7 +44,48 @@ db.exec(`
     updated_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
     FOREIGN KEY (story_id) REFERENCES stories(id) ON DELETE CASCADE
   );
+
+  CREATE TABLE IF NOT EXISTS story_versions (
+    id TEXT PRIMARY KEY,
+    story_id TEXT NOT NULL,
+    version INTEGER NOT NULL,
+    result TEXT NOT NULL,
+    change_type TEXT DEFAULT 'create',
+    change_summary TEXT,
+    created_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
+    FOREIGN KEY (story_id) REFERENCES stories(id) ON DELETE CASCADE,
+    UNIQUE(story_id, version)
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_versions_story_id ON story_versions(story_id, version DESC);
+
+  CREATE TABLE IF NOT EXISTS usage_logs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    story_id TEXT,
+    stage TEXT,
+    provider TEXT,
+    model TEXT,
+    input_tokens INTEGER DEFAULT 0,
+    output_tokens INTEGER DEFAULT 0,
+    cost REAL DEFAULT 0,
+    duration_ms INTEGER DEFAULT 0,
+    success INTEGER DEFAULT 1,
+    created_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime'))
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_usage_logs_created_at ON usage_logs(created_at DESC);
+  CREATE INDEX IF NOT EXISTS idx_usage_logs_provider ON usage_logs(provider);
 `)
+
+const migrateRating = db.prepare(`SELECT COUNT(*) as cnt FROM pragma_table_info('stories') WHERE name = 'rating'`)
+if (migrateRating.get().cnt === 0) {
+  db.exec(`ALTER TABLE stories ADD COLUMN rating INTEGER DEFAULT 0`)
+}
+
+const migrateVersion = db.prepare(`SELECT COUNT(*) as cnt FROM pragma_table_info('stories') WHERE name = 'current_version'`)
+if (migrateVersion.get().cnt === 0) {
+  db.exec(`ALTER TABLE stories ADD COLUMN current_version INTEGER DEFAULT 1`)
+}
 
 export function createStory(record) {
   const stmt = db.prepare(`
@@ -58,6 +101,16 @@ export function createStory(record) {
     tone: record.tone || null,
     result: JSON.stringify(record.result),
   })
+
+  createVersion({
+    id: `v_${record.id}_1`,
+    storyId: record.id,
+    version: 1,
+    result: record.result,
+    changeType: 'create',
+    changeSummary: '初始创作',
+  })
+
   return getStory(record.id)
 }
 
@@ -101,6 +154,35 @@ export function deleteStory(id) {
   return result.changes > 0
 }
 
+export function updateStoryResult(id, result) {
+  const story = db.prepare('SELECT current_version FROM stories WHERE id = ?').get(id)
+  if (!story) return null
+
+  const nextVersion = story.current_version + 1
+
+  db.prepare(`
+    UPDATE stories SET result = ?, current_version = ?, updated_at = datetime('now', 'localtime') WHERE id = ?
+  `).run(JSON.stringify(result), nextVersion, id)
+
+  createVersion({
+    id: `v_${id}_${nextVersion}`,
+    storyId: id,
+    version: nextVersion,
+    result,
+    changeType: 'edit',
+    changeSummary: '内容编辑',
+  })
+
+  return getStory(id)
+}
+
+export function updateStoryRating(id, rating) {
+  const result = db.prepare(`
+    UPDATE stories SET rating = ?, updated_at = datetime('now', 'localtime') WHERE id = ?
+  `).run(rating, id)
+  return result.changes > 0
+}
+
 export function toggleFavorite(id) {
   const row = db.prepare('SELECT is_favorite FROM stories WHERE id = ?').get(id)
   if (!row) return null
@@ -112,6 +194,127 @@ export function toggleFavorite(id) {
 export function getFavorites() {
   const rows = db.prepare('SELECT id FROM stories WHERE is_favorite = 1 ORDER BY created_at DESC').all()
   return rows.map(r => r.id)
+}
+
+export function createVersion({ id, storyId, version, result, changeType, changeSummary }) {
+  const stmt = db.prepare(`
+    INSERT INTO story_versions (id, story_id, version, result, change_type, change_summary)
+    VALUES (@id, @storyId, @version, @result, @changeType, @changeSummary)
+  `)
+  stmt.run({
+    id,
+    storyId,
+    version,
+    result: JSON.stringify(result),
+    changeType: changeType || 'create',
+    changeSummary: changeSummary || '',
+  })
+  return getVersion(id)
+}
+
+export function getVersion(id) {
+  const row = db.prepare('SELECT * FROM story_versions WHERE id = ?').get(id)
+  if (!row) return null
+  return formatVersion(row)
+}
+
+export function getVersionsByStoryId(storyId) {
+  const rows = db.prepare('SELECT * FROM story_versions WHERE story_id = ? ORDER BY version DESC').all(storyId)
+  return rows.map(formatVersion)
+}
+
+export function getVersionByNumber(storyId, version) {
+  const row = db.prepare('SELECT * FROM story_versions WHERE story_id = ? AND version = ?').get(storyId, version)
+  if (!row) return null
+  return formatVersion(row)
+}
+
+export function deleteVersion(id) {
+  const result = db.prepare('DELETE FROM story_versions WHERE id = ?').run(id)
+  return result.changes > 0
+}
+
+export function logUsage({ storyId, stage, provider, model, inputTokens, outputTokens, cost, durationMs, success }) {
+  db.prepare(`
+    INSERT INTO usage_logs (story_id, stage, provider, model, input_tokens, output_tokens, cost, duration_ms, success)
+    VALUES (@storyId, @stage, @provider, @model, @inputTokens, @outputTokens, @cost, @durationMs, @success)
+  `).run({
+    storyId: storyId || null,
+    stage: stage || null,
+    provider: provider || null,
+    model: model || null,
+    inputTokens: inputTokens || 0,
+    outputTokens: outputTokens || 0,
+    cost: cost || 0,
+    durationMs: durationMs || 0,
+    success: success !== undefined ? (success ? 1 : 0) : 1,
+  })
+}
+
+export function getUsageStats({ days = 30 } = {}) {
+  const since = new Date(Date.now() - days * 86400000).toISOString()
+  const rows = db.prepare(`
+    SELECT
+      provider,
+      model,
+      COUNT(*) as call_count,
+      SUM(input_tokens) as total_input_tokens,
+      SUM(output_tokens) as total_output_tokens,
+      SUM(cost) as total_cost,
+      AVG(duration_ms) as avg_duration_ms,
+      SUM(CASE WHEN success = 0 THEN 1 ELSE 0 END) as fail_count
+    FROM usage_logs
+    WHERE created_at >= ?
+    GROUP BY provider, model
+    ORDER BY call_count DESC
+  `).all(since)
+
+  const dailyRows = db.prepare(`
+    SELECT
+      DATE(created_at) as date,
+      COUNT(*) as count,
+      SUM(cost) as cost,
+      SUM(input_tokens + output_tokens) as tokens
+    FROM usage_logs
+    WHERE created_at >= ?
+    GROUP BY DATE(created_at)
+    ORDER BY date ASC
+  `).all(since)
+
+  return { byProvider: rows, daily: dailyRows, days }
+}
+
+export function getDashboardStats() {
+  const totalStories = db.prepare('SELECT COUNT(*) as count FROM stories').get().count
+  const totalWords = db.prepare(`
+    SELECT SUM(LENGTH(result) - LENGTH(REPLACE(result, '"', ''))) as approx_words FROM stories
+  `).get().approx_words || 0
+
+  const templateDist = db.prepare(`
+    SELECT template, COUNT(*) as count FROM stories WHERE template IS NOT NULL GROUP BY template ORDER BY count DESC
+  `).all()
+
+  const recentStories = db.prepare(`
+    SELECT id, product_name, created_at FROM stories ORDER BY created_at DESC LIMIT 5
+  `).all()
+
+  const avgRating = db.prepare(`
+    SELECT AVG(rating) as avg FROM stories WHERE rating > 0
+  `).get().avg || 0
+
+  const favCount = db.prepare('SELECT COUNT(*) as count FROM stories WHERE is_favorite = 1').get().count
+
+  const totalCost = db.prepare('SELECT SUM(cost) as total FROM usage_logs').get().total || 0
+
+  return {
+    totalStories,
+    totalWords: Math.round(totalWords),
+    templateDist,
+    recentStories,
+    avgRating: Math.round(avgRating * 10) / 10,
+    favCount,
+    totalCost: Math.round(totalCost * 10000) / 10000,
+  }
 }
 
 export function saveWorkflowState(state) {
@@ -157,8 +360,22 @@ function formatStory(row) {
     tone: row.tone,
     result: JSON.parse(row.result),
     isFavorite: row.is_favorite === 1,
+    rating: row.rating || 0,
+    currentVersion: row.current_version || 1,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
+  }
+}
+
+function formatVersion(row) {
+  return {
+    id: row.id,
+    storyId: row.story_id,
+    version: row.version,
+    result: JSON.parse(row.result),
+    changeType: row.change_type,
+    changeSummary: row.change_summary,
+    createdAt: row.created_at,
   }
 }
 

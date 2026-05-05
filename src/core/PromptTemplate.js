@@ -108,6 +108,53 @@ export class PromptTemplate {
 
 请直接输出修正后的内容，保持原有风格和结构。`
     });
+
+    this.templates.set('regenerateSection', {
+      system: `你是一位品牌内容创作专家。请严格按照JSON格式输出，不要输出任何JSON之外的内容。`,
+      user: `请重新生成品牌文档中的"{{sectionName}}"部分。
+
+当前内容:
+{{sectionContent}}
+
+产品上下文:
+{{productContext}}
+
+优化指令: {{instruction}}
+
+要求：
+1. 保持与其他部分的一致性
+2. 内容专业、具体、有深度
+3. 符合品牌调性
+
+输出格式（严格遵守）：
+{"section": 重新生成的内容对象}
+
+注意：输出必须是完整的JSON，section字段包含重新生成的完整内容。`
+    });
+
+    this.templates.set('refineContent', {
+      system: `你是一位品牌内容优化专家。请严格按照JSON格式输出，不要输出任何JSON之外的内容。`,
+      user: `请根据优化指令改进以下品牌文档内容。
+
+当前内容:
+{{currentContent}}
+
+产品上下文:
+{{productContext}}
+
+优化指令: {{instruction}}
+
+要求：
+1. 严格遵循优化指令
+2. 保持内容一致性
+3. 只修改需要优化的部分，其他部分保持不变
+
+输出格式（严格遵守）：
+输出包含需要修改的字段的JSON对象，例如：
+{"productValue": {...}, "userProfile": {...}, "scenarios": [...], "brandStory": {...}}
+
+只包含需要修改的部分即可。`
+    });
   }
 
   /**

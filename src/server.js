@@ -136,6 +136,10 @@ app.get('/api/story/create/stream', async (req, res) => {
       sendSSE('stage:error', data);
     });
 
+    agent.workflow.on('stage:text', (data) => {
+      sendSSE('stage:text', data);
+    });
+
     const productFeatures = features ? features.split(',').filter(f => f.trim()) : [];
 
     const result = await agent.quickCreate(
@@ -450,15 +454,164 @@ app.get('/api/favorites', (req, res) => {
   }
 })
 
-// 错误处理
-app.use((err, req, res, next) => {
-  console.error('未捕获错误:', err);
-  res.status(500).json({
+app.get('/api/stories/:id/versions', (req, res) => {
+  try {
+    const story = db.getStory(req.params.id)
+    if (!story) return res.status(404).json({ success: false, error: '记录不存在' })
+    const versions = db.getVersionsByStoryId(req.params.id)
+    res.json({ success: true, data: { versions, currentVersion: story.currentVersion } })
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message })
+  }
+})
+
+app.get('/api/stories/:id/versions/:version', (req, res) => {
+  try {
+    const version = db.getVersionByNumber(req.params.id, parseInt(req.params.version))
+    if (!version) return res.status(404).json({ success: false, error: '版本不存在' })
+    res.json({ success: true, data: version })
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message })
+  }
+})
+
+app.patch('/api/stories/:id/content', (req, res) => {
+  try {
+    const { result } = req.body
+    if (!result) return res.status(400).json({ success: false, error: '缺少必要参数: result' })
+    const updated = db.updateStoryResult(req.params.id, result)
+    if (!updated) return res.status(404).json({ success: false, error: '记录不存在' })
+    res.json({ success: true, data: updated })
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message })
+  }
+})
+
+app.patch('/api/stories/:id/rating', (req, res) => {
+  try {
+    const { rating } = req.body
+    if (rating === undefined || rating < 0 || rating > 5) {
+      return res.status(400).json({ success: false, error: '评分必须在0-5之间' })
+    }
+    const updated = db.updateStoryRating(req.params.id, rating)
+    if (!updated) return res.status(404).json({ success: false, error: '记录不存在' })
+    res.json({ success: true, data: { rating } })
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message })
+  }
+})
+
+app.post('/api/stories/:id/regenerate/section', async (req, res) => {
+  try {
+    const { section, instruction } = req.body
+    if (!section) return res.status(400).json({ success: false, error: '缺少必要参数: section' })
+
+    const story = db.getStory(req.params.id)
+    if (!story) return res.status(404).json({ success: false, error: '记录不存在' })
+
+    const { BrandStoryAgent } = await import('./core/Agent.js')
+    const agent = new BrandStoryAgent({ tone: story.tone })
+    const sectionResult = await agent.regenerateSection(story.result, section, instruction || '')
+
+    const mergedResult = { ...story.result, [section]: sectionResult }
+    const updated = db.updateStoryResult(req.params.id, mergedResult)
+
+    db.createVersion({
+      id: `v_${req.params.id}_${updated.currentVersion}`,
+      storyId: req.params.id,
+      version: updated.currentVersion,
+      result: mergedResult,
+      changeType: 'regenerate',
+      changeSummary: `重新生成: ${section}`,
+    })
+
+    res.json({ success: true, data: updated })
+  } catch (error) {
+    console.error('局部重新生成失败:', error)
+    res.status(500).json({ success: false, error: error.message })
+  }
+})
+
+app.post('/api/stories/:id/refine', async (req, res) => {
+  try {
+    const { instruction, sections } = req.body
+    if (!instruction) return res.status(400).json({ success: false, error: '缺少必要参数: instruction' })
+
+    const story = db.getStory(req.params.id)
+    if (!story) return res.status(404).json({ success: false, error: '记录不存在' })
+
+    const { BrandStoryAgent } = await import('./core/Agent.js')
+    const agent = new BrandStoryAgent({ tone: story.tone })
+    const refinedResult = await agent.refineContent(story.result, instruction, sections)
+
+    const updated = db.updateStoryResult(req.params.id, refinedResult)
+
+    db.createVersion({
+      id: `v_${req.params.id}_${updated.currentVersion}`,
+      storyId: req.params.id,
+      version: updated.currentVersion,
+      result: refinedResult,
+      changeType: 'refine',
+      changeSummary: instruction.substring(0, 100),
+    })
+
+    res.json({ success: true, data: updated })
+  } catch (error) {
+    console.error('优化创作失败:', error)
+    res.status(500).json({ success: false, error: error.message })
+  }
+})
+
+app.get('/api/dashboard', (req, res) => {
+  try {
+    const stats = db.getDashboardStats()
+    const usageStats = db.getUsageStats({ days: 30 })
+    res.json({ success: true, data: { ...stats, usage: usageStats } })
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message })
+  }
+})
+
+// 404处理
+app.use((req, res) => {
+  res.status(404).json({
     success: false,
-    error: '服务器内部错误',
-    message: err.message
-  });
-});
+    error: '接口不存在',
+    path: req.originalUrl
+  })
+})
+
+// 全局错误处理
+app.use((err, req, res, next) => {
+  console.error('[ServerError]', err)
+  
+  if (err.type === 'entity.parse.failed') {
+    return res.status(400).json({ success: false, error: '请求体JSON格式错误' })
+  }
+  if (err.type === 'entity.too.large') {
+    return res.status(413).json({ success: false, error: '请求体过大' })
+  }
+  if (err.code === 'SQLITE_ERROR') {
+    return res.status(500).json({ success: false, error: '数据库操作失败', detail: err.message })
+  }
+  
+  const status = err.status || err.statusCode || 500
+  res.status(status).json({
+    success: false,
+    error: status >= 500 ? '服务器内部错误' : err.message,
+    message: err.message,
+    ...(process.env.NODE_ENV === 'development' && { stack: err.stack })
+  })
+})
+
+// 进程级异常处理
+process.on('uncaughtException', (err) => {
+  console.error('[UncaughtException]', err)
+})
+
+process.on('unhandledRejection', (reason) => {
+  console.error('[UnhandledRejection]', reason)
+})
 
 // 启动服务
 const server = app.listen(PORT, () => {

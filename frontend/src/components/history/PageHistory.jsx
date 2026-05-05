@@ -2,7 +2,7 @@ import { useState, useMemo, useCallback } from 'react'
 import { Icon, ConfirmDialog } from '../common'
 import { TEMPLATES } from '../../constants'
 
-export function PageHistory({ history, favorites, onToggleFavorite, onSelect, onDelete, onNavigate }) {
+export function PageHistory({ history, favorites, onToggleFavorite, onSelect, onRefine, onDelete, onNavigate }) {
   const [search, setSearch] = useState('')
   const [confirmDelete, setConfirmDelete] = useState(null)
   const [filter, setFilter] = useState('all')
@@ -125,6 +125,15 @@ export function PageHistory({ history, favorites, onToggleFavorite, onSelect, on
               >
                 <Icon name="bookmark" size={14} />
               </button>
+              {onRefine && (
+                <button
+                  className="icon-btn icon-btn--refine"
+                  title="优化迭代"
+                  onClick={(e) => { e.stopPropagation(); onRefine(h) }}
+                >
+                  <Icon name="star" size={14} />
+                </button>
+              )}
               <button
                 className="icon-btn icon-btn--danger"
                 title="删除"
