@@ -8,6 +8,27 @@ export class WorkflowEngine {
     this.stages = new Map();
     this.transitions = new Map();
     this.middleware = [];
+    this._listeners = {};
+  }
+
+  on(event, handler) {
+    if (!this._listeners[event]) this._listeners[event] = [];
+    this._listeners[event].push(handler);
+    return this;
+  }
+
+  off(event, handler) {
+    if (!this._listeners[event]) return this;
+    this._listeners[event] = this._listeners[event].filter(h => h !== handler);
+    return this;
+  }
+
+  _emit(event, data) {
+    const handlers = this._listeners[event];
+    if (!handlers) return;
+    for (const h of handlers) {
+      try { h(data) } catch (e) { console.error(`[Workflow] 事件处理器错误:`, e.message) }
+    }
   }
 
   /**
@@ -60,22 +81,33 @@ export class WorkflowEngine {
     };
 
     // 按顺序执行阶段
+    const stageNames = Array.from(this.stages.keys());
+    const totalStages = stageNames.length;
+
     for (const [stageName, stage] of this.stages) {
       try {
-        // 检查输入依赖
         this._validateInputs(stage, executionContext);
         
-        // 执行前置中间件
         for (const mw of this.middleware) {
           if (mw.before) {
             await mw.before(stageName, executionContext);
           }
         }
 
-        // 执行阶段
         console.log(`[Workflow] 执行阶段: ${stage.name}`);
         stage.status = 'running';
         stage.startTime = Date.now();
+
+        const stageIndex = stageNames.indexOf(stageName);
+        this._emit('stage:start', {
+          stage: stageName,
+          name: stage.name,
+          description: stage.description,
+          index: stageIndex,
+          total: totalStages,
+          progress: Math.round((stageIndex / totalStages) * 100),
+          timestamp: Date.now(),
+        });
         
         const result = await stage.handler(executionContext);
         
@@ -83,13 +115,21 @@ export class WorkflowEngine {
         stage.endTime = Date.now();
         stage.result = result;
         
-        // 保存结果到上下文
         executionContext.stageResults[stageName] = result;
         Object.assign(executionContext, result);
         
         executionContext.metadata.stagesCompleted++;
+
+        this._emit('stage:complete', {
+          stage: stageName,
+          name: stage.name,
+          index: stageIndex,
+          total: totalStages,
+          progress: Math.round(((stageIndex + 1) / totalStages) * 100),
+          timestamp: Date.now(),
+          resultKeys: Object.keys(result || {}),
+        });
         
-        // 执行后置中间件
         for (const mw of this.middleware) {
           if (mw.after) {
             await mw.after(stageName, result, executionContext);
@@ -102,8 +142,14 @@ export class WorkflowEngine {
         stage.error = error;
         
         executionContext.metadata.stagesFailed++;
+
+        this._emit('stage:error', {
+          stage: stageName,
+          name: stage.name,
+          error: error.message,
+          timestamp: Date.now(),
+        });
         
-        // 错误处理策略
         const shouldContinue = await this._handleStageError(stage, error, executionContext);
         if (!shouldContinue) {
           throw new WorkflowError(

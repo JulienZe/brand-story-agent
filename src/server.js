@@ -7,6 +7,7 @@ import 'dotenv/config';
 import express from 'express';
 import cors from 'cors';
 import config, { validateConfig } from './config/index.js';
+import * as db from './core/Database.js';
 
 validateConfig();
 
@@ -97,6 +98,74 @@ app.post('/api/story/create', async (req, res) => {
 });
 
 /**
+ * SSE 创建品牌故事 (实时进度推送)
+ * GET /api/story/create/stream
+ */
+app.get('/api/story/create/stream', async (req, res) => {
+  const { productName, productDesc, targetUser, tone, features } = req.query;
+
+  if (!productName || !productDesc) {
+    return res.status(400).json({ error: '缺少必要参数: productName, productDesc' });
+  }
+
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache');
+  res.setHeader('Connection', 'keep-alive');
+  res.setHeader('X-Accel-Buffering', 'no');
+  res.flushHeaders();
+
+  const sendSSE = (event, data) => {
+    res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+  };
+
+  sendSSE('connected', { message: 'SSE连接已建立', timestamp: Date.now() });
+
+  try {
+    const { BrandStoryAgent } = await import('./core/Agent.js');
+    const agent = new BrandStoryAgent({ tone });
+
+    agent.workflow.on('stage:start', (data) => {
+      sendSSE('stage:start', data);
+    });
+
+    agent.workflow.on('stage:complete', (data) => {
+      sendSSE('stage:complete', data);
+    });
+
+    agent.workflow.on('stage:error', (data) => {
+      sendSSE('stage:error', data);
+    });
+
+    const productFeatures = features ? features.split(',').filter(f => f.trim()) : [];
+
+    const result = await agent.quickCreate(
+      productName,
+      productDesc,
+      targetUser || '通用用户',
+      productFeatures
+    );
+
+    const record = {
+      id: Date.now().toString(),
+      productName,
+      productDesc,
+      template: null,
+      targetUser: targetUser || null,
+      tone: tone || null,
+      result,
+    };
+    try { db.createStory(record) } catch (e) { console.error('保存到数据库失败:', e.message) }
+
+    sendSSE('complete', { result, id: record.id });
+  } catch (error) {
+    console.error('SSE创建失败:', error);
+    sendSSE('error', { error: error.message });
+  } finally {
+    res.end();
+  }
+});
+
+/**
  * 快速创建品牌故事
  * POST /api/story/quick
  */
@@ -118,6 +187,17 @@ app.post('/api/story/quick', async (req, res) => {
       targetUser || '通用用户',
       productFeatures || []
     );
+
+    const record = {
+      id: Date.now().toString(),
+      productName,
+      productDesc,
+      template: null,
+      targetUser: targetUser || null,
+      tone: options?.tone || null,
+      result,
+    }
+    try { db.createStory(record) } catch (e) { console.error('保存到数据库失败:', e.message) }
 
     res.json({
       success: true,
@@ -299,6 +379,76 @@ app.get('/api/models', async (req, res) => {
     });
   }
 });
+
+// ========== 数据库持久化 API ==========
+
+app.get('/api/stories', (req, res) => {
+  try {
+    const { search, favorites, limit, offset } = req.query
+    const stories = db.getAllStories({
+      search: search || undefined,
+      favoritesOnly: favorites === 'true' || favorites === '1',
+      limit: parseInt(limit) || 50,
+      offset: parseInt(offset) || 0,
+    })
+    const total = db.getStoryCount()
+    res.json({ success: true, data: { stories, total } })
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message })
+  }
+})
+
+app.get('/api/stories/:id', (req, res) => {
+  try {
+    const story = db.getStory(req.params.id)
+    if (!story) return res.status(404).json({ success: false, error: '记录不存在' })
+    res.json({ success: true, data: story })
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message })
+  }
+})
+
+app.post('/api/stories', (req, res) => {
+  try {
+    const { id, productName, productDesc, template, targetUser, tone, result } = req.body
+    if (!id || !productName || !result) {
+      return res.status(400).json({ success: false, error: '缺少必要参数' })
+    }
+    const story = db.createStory({ id, productName, productDesc, template, targetUser, tone, result })
+    res.json({ success: true, data: story })
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message })
+  }
+})
+
+app.delete('/api/stories/:id', (req, res) => {
+  try {
+    const deleted = db.deleteStory(req.params.id)
+    if (!deleted) return res.status(404).json({ success: false, error: '记录不存在' })
+    res.json({ success: true })
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message })
+  }
+})
+
+app.patch('/api/stories/:id/favorite', (req, res) => {
+  try {
+    const isFav = db.toggleFavorite(req.params.id)
+    if (isFav === null) return res.status(404).json({ success: false, error: '记录不存在' })
+    res.json({ success: true, data: { isFavorite: isFav } })
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message })
+  }
+})
+
+app.get('/api/favorites', (req, res) => {
+  try {
+    const ids = db.getFavorites()
+    res.json({ success: true, data: ids })
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message })
+  }
+})
 
 // 错误处理
 app.use((err, req, res, next) => {
