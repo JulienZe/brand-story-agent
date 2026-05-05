@@ -1,0 +1,33 @@
+{
+  "name": "brand-story-agent",
+  "version": "1.0.0",
+  "description": "产品品牌推广软文创作智能体 - 将产品特性转化为生动的品牌故事",
+  "main": "src/index.js",
+  "type": "module",
+  "scripts": {
+    "start": "node src/index.js",
+    "dev": "node --watch src/index.js",
+    "test": "node --test test/**/*.test.js",
+    "lint": "eslint src/"
+  },
+  "keywords": [
+    "brand",
+    "marketing",
+    "content-creation",
+    "ai-agent",
+    "copywriting"
+  ],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "cors": "^2.8.5",
+    "dotenv": "^17.4.2",
+    "express": "^4.18.2"
+  },
+  "devDependencies": {
+    "eslint": "^8.57.0"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}
