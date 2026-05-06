@@ -172,6 +172,74 @@ export async function getDashboard() {
   return request('/api/dashboard', { retries: 1 })
 }
 
+export async function getBrands() {
+  return request('/api/brands', { retries: 1 })
+}
+
+export async function getBrandDNA(brandName) {
+  return request(`/api/brands/${encodeURIComponent(brandName)}`, { retries: 1 })
+}
+
+export async function createBrandDNA({ brandName, toneKeywords, values, styleGuide, personality, colorPalette, samplePhrases, logoData }) {
+  return request('/api/brands', {
+    method: 'POST',
+    body: JSON.stringify({ brandName, toneKeywords, values, styleGuide, personality, colorPalette, samplePhrases, logoData }),
+    retries: 0,
+  })
+}
+
+export async function deleteBrandDNA(brandName) {
+  return request(`/api/brands/${encodeURIComponent(brandName)}`, {
+    method: 'DELETE',
+    retries: 0,
+  })
+}
+
+export async function getBrandAssets(brandName, { assetType, limit, offset } = {}) {
+  const params = new URLSearchParams()
+  if (assetType) params.set('assetType', assetType)
+  if (limit) params.set('limit', limit)
+  if (offset) params.set('offset', offset)
+  const qs = params.toString()
+  return request(`/api/brands/${encodeURIComponent(brandName)}/assets${qs ? '?' + qs : ''}`, { retries: 1 })
+}
+
+export async function getBrandAsset(id) {
+  return request(`/api/assets/${id}`, { retries: 1 })
+}
+
+export async function createBrandAsset(brandName, { assetType, title, prompt, imageData, config, tags, metadata }) {
+  return request(`/api/brands/${encodeURIComponent(brandName)}/assets`, {
+    method: 'POST',
+    body: JSON.stringify({ assetType, title, prompt, imageData, config, tags, metadata }),
+    retries: 0,
+  })
+}
+
+export async function deleteBrandAsset(id) {
+  return request(`/api/assets/${id}`, {
+    method: 'DELETE',
+    retries: 0,
+  })
+}
+
+export async function generateImage({ prompt, negativePrompt, width, height, brandName, assetType, title }) {
+  return request('/api/image/generate', {
+    method: 'POST',
+    body: JSON.stringify({ prompt, negativePrompt, width, height, brandName, assetType, title }),
+    timeout: 120000,
+    retries: 0,
+  })
+}
+
+export async function extractColors(imageData, brandName) {
+  return request('/api/brand/extract-colors', {
+    method: 'POST',
+    body: JSON.stringify({ imageData, brandName }),
+    retries: 0,
+  })
+}
+
 export function createStorySSE({ productName, productDesc, productFeatures, targetUser, tone }, callbacks = {}) {
   const params = new URLSearchParams()
   params.set('productName', productName)

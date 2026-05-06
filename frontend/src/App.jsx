@@ -1,13 +1,14 @@
 import { useState, useEffect, useCallback } from 'react'
 import './App.css'
 import { useLocalStorage, useToast } from './hooks'
-import { Toast, OnboardingGuide, ErrorBoundary } from './components/common'
+import { Toast, OnboardingGuide, ErrorBoundary, Icon } from './components/common'
 import { Navbar, Footer } from './components/layout/Navbar'
 import { PageHome } from './components/home/PageHome'
 import { PageCreate } from './components/create/PageCreate'
 import { PageResult } from './components/result/PageResult'
 import { PageHistory } from './components/history/PageHistory'
 import { PageDashboard } from './components/dashboard/PageDashboard'
+import { PageAssets } from './components/assets/PageAssets'
 import * as api from './services/api'
 
 function App() {
@@ -40,27 +41,35 @@ function App() {
           }))
           setHistory(mapped)
         }
-      } catch {}
+      } catch (err) {
+        console.error('加载故事列表失败:', err)
+      }
       try {
         const ids = await api.getFavorites()
         if (mounted && Array.isArray(ids)) setFavorites(ids)
-      } catch {}
+      } catch (err) {
+        console.error('加载收藏列表失败:', err)
+      }
     })()
     return () => { mounted = false }
-  }, [])
+  }, [setHistory, setFavorites])
 
   const handleCreate = useCallback((record) => {
     setHistory(prev => [record, ...prev])
     setCurrentRecord(record)
     showToast('品牌故事创作完成！')
-    api.saveStory(record).catch(() => {})
+    api.saveStory(record).catch((err) => {
+      console.error('保存故事失败:', err)
+    })
   }, [setHistory, showToast])
 
   const handleDelete = useCallback(async (id) => {
     setHistory(prev => prev.filter(h => h.id !== id))
     setFavorites(prev => prev.filter(f => f !== id))
     showToast('记录已删除')
-    try { await api.deleteStory(id) } catch {}
+    try { await api.deleteStory(id) } catch (err) {
+      console.error('删除故事失败:', err)
+    }
   }, [setHistory, setFavorites, showToast])
 
   const toggleFavorite = useCallback(async (id) => {
@@ -76,8 +85,10 @@ function App() {
       return [...prev, id]
     })
     setHistory(prev => prev.map(h => h.id === id ? { ...h, isFavorite: newIsFav } : h))
-    try { await api.toggleFavorite(id) } catch {}
-  }, [setFavorites, showToast])
+    try { await api.toggleFavorite(id) } catch (err) {
+      console.error('切换收藏失败:', err)
+    }
+  }, [setFavorites, setHistory, showToast])
 
   const navigate = useCallback((target, data) => {
     if (target === 'result' && data) setCurrentRecord(data)
@@ -89,7 +100,9 @@ function App() {
 
   const closeOnboarding = useCallback(() => {
     setShowOnboarding(false)
-    try { localStorage.setItem('brand-story-onboarded', 'true') } catch {}
+    try { localStorage.setItem('brand-story-onboarded', 'true') } catch (err) {
+      console.error('保存引导状态失败:', err)
+    }
   }, [])
 
   useEffect(() => {
@@ -151,6 +164,9 @@ function App() {
         )}
         {page === 'dashboard' && (
           <PageDashboard onNavigate={navigate} />
+        )}
+        {page === 'assets' && (
+          <PageAssets onNavigate={navigate} showToast={showToast} />
         )}
         </ErrorBoundary>
       </main>

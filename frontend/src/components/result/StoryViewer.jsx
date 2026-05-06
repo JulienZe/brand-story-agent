@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback, useMemo } from 'react'
+import { useState, useEffect, useRef, useCallback } from 'react'
 import { Icon, QualityScore } from '../common'
 import { renderMarkdownContent, exportJSON, exportMarkdown, buildFullMarkdown, exportPDF } from '../../utils'
 import * as api from '../../services/api'
@@ -9,25 +9,6 @@ const SECTIONS = [
   { key: 'scenarios', label: '使用场景', icon: 'eye' },
   { key: 'brandStory', label: '品牌故事', icon: 'book' },
 ]
-
-function EditableText({ value, onChange, multiline, className }) {
-  if (multiline) {
-    return (
-      <textarea
-        className={`edit-textarea ${className || ''}`}
-        value={value || ''}
-        onChange={(e) => onChange(e.target.value)}
-      />
-    )
-  }
-  return (
-    <input
-      className={`edit-input ${className || ''}`}
-      value={value || ''}
-      onChange={(e) => onChange(e.target.value)}
-    />
-  )
-}
 
 function RatingStars({ rating, onChange }) {
   const [hover, setHover] = useState(0)
@@ -167,7 +148,8 @@ function RegenerateModal({ section, onClose, onConfirm }) {
     try {
       await onConfirm(instruction)
       onClose()
-    } catch {
+    } catch (err) {
+      console.error('重新生成失败:', err)
     } finally {
       setLoading(false)
     }
@@ -211,7 +193,8 @@ function RefineModal({ onClose, onConfirm }) {
     try {
       await onConfirm(instruction)
       onClose()
-    } catch {
+    } catch (err) {
+      console.error('优化失败:', err)
     } finally {
       setLoading(false)
     }

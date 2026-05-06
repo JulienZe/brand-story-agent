@@ -75,6 +75,37 @@ db.exec(`
 
   CREATE INDEX IF NOT EXISTS idx_usage_logs_created_at ON usage_logs(created_at DESC);
   CREATE INDEX IF NOT EXISTS idx_usage_logs_provider ON usage_logs(provider);
+
+  CREATE TABLE IF NOT EXISTS brand_dna (
+    id TEXT PRIMARY KEY,
+    brand_name TEXT NOT NULL UNIQUE,
+    tone_keywords TEXT,
+    values TEXT,
+    style_guide TEXT,
+    personality TEXT,
+    color_palette TEXT,
+    sample_phrases TEXT,
+    logo_data TEXT,
+    created_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
+    updated_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime'))
+  );
+
+  CREATE TABLE IF NOT EXISTS brand_assets (
+    id TEXT PRIMARY KEY,
+    brand_name TEXT NOT NULL,
+    asset_type TEXT NOT NULL,
+    title TEXT,
+    prompt TEXT,
+    image_data TEXT,
+    config TEXT,
+    tags TEXT,
+    metadata TEXT,
+    created_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
+    FOREIGN KEY (brand_name) REFERENCES brand_dna(brand_name) ON DELETE CASCADE
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_brand_assets_brand ON brand_assets(brand_name);
+  CREATE INDEX IF NOT EXISTS idx_brand_assets_type ON brand_assets(asset_type);
 `)
 
 const migrateRating = db.prepare(`SELECT COUNT(*) as cnt FROM pragma_table_info('stories') WHERE name = 'rating'`)
@@ -375,6 +406,134 @@ function formatVersion(row) {
     result: JSON.parse(row.result),
     changeType: row.change_type,
     changeSummary: row.change_summary,
+    createdAt: row.created_at,
+  }
+}
+
+export function createBrandDNA({ id, brandName, toneKeywords, values, styleGuide, personality, colorPalette, samplePhrases, logoData }) {
+  const stmt = db.prepare(`
+    INSERT INTO brand_dna (id, brand_name, tone_keywords, values, style_guide, personality, color_palette, sample_phrases, logo_data)
+    VALUES (@id, @brandName, @toneKeywords, @values, @styleGuide, @personality, @colorPalette, @samplePhrases, @logoData)
+    ON CONFLICT(brand_name) DO UPDATE SET
+      tone_keywords = @toneKeywords,
+      values = @values,
+      style_guide = @styleGuide,
+      personality = @personality,
+      color_palette = @colorPalette,
+      sample_phrases = @samplePhrases,
+      logo_data = @logoData,
+      updated_at = datetime('now', 'localtime')
+  `)
+  stmt.run({
+    id: id || `bd_${Date.now()}`,
+    brandName,
+    toneKeywords: JSON.stringify(toneKeywords || []),
+    values: JSON.stringify(values || []),
+    styleGuide: JSON.stringify(styleGuide || {}),
+    personality: JSON.stringify(personality || {}),
+    colorPalette: JSON.stringify(colorPalette || []),
+    samplePhrases: JSON.stringify(samplePhrases || []),
+    logoData: logoData || null,
+  })
+  return getBrandDNA(brandName)
+}
+
+export function getBrandDNA(brandName) {
+  const row = db.prepare('SELECT * FROM brand_dna WHERE brand_name = ?').get(brandName)
+  if (!row) return null
+  return formatBrandDNA(row)
+}
+
+export function getAllBrandDNAs() {
+  const rows = db.prepare('SELECT * FROM brand_dna ORDER BY updated_at DESC').all()
+  return rows.map(formatBrandDNA)
+}
+
+export function deleteBrandDNA(brandName) {
+  const result = db.prepare('DELETE FROM brand_dna WHERE brand_name = ?').run(brandName)
+  return result.changes > 0
+}
+
+export function createBrandAsset({ id, brandName, assetType, title, prompt, imageData, config, tags, metadata }) {
+  const stmt = db.prepare(`
+    INSERT INTO brand_assets (id, brand_name, asset_type, title, prompt, image_data, config, tags, metadata)
+    VALUES (@id, @brandName, @assetType, @title, @prompt, @imageData, @config, @tags, @metadata)
+  `)
+  stmt.run({
+    id: id || `ba_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+    brandName,
+    assetType,
+    title: title || null,
+    prompt: prompt || null,
+    imageData: imageData || null,
+    config: JSON.stringify(config || {}),
+    tags: JSON.stringify(tags || []),
+    metadata: JSON.stringify(metadata || {}),
+  })
+  return getBrandAsset(id)
+}
+
+export function getBrandAsset(id) {
+  const row = db.prepare('SELECT * FROM brand_assets WHERE id = ?').get(id)
+  if (!row) return null
+  return formatBrandAsset(row)
+}
+
+export function getBrandAssets(brandName, { assetType, limit = 50, offset = 0 } = {}) {
+  let query = 'SELECT * FROM brand_assets WHERE brand_name = ?'
+  const params = [brandName]
+  if (assetType) {
+    query += ' AND asset_type = ?'
+    params.push(assetType)
+  }
+  query += ' ORDER BY created_at DESC LIMIT ? OFFSET ?'
+  params.push(limit, offset)
+  const rows = db.prepare(query).all(...params)
+  return rows.map(formatBrandAsset)
+}
+
+export function getBrandAssetCount(brandName) {
+  const row = db.prepare('SELECT COUNT(*) as count FROM brand_assets WHERE brand_name = ?').get(brandName)
+  return row.count
+}
+
+export function deleteBrandAsset(id) {
+  const result = db.prepare('DELETE FROM brand_assets WHERE id = ?').run(id)
+  return result.changes > 0
+}
+
+export function updateBrandAssetConfig(id, config) {
+  db.prepare('UPDATE brand_assets SET config = ? WHERE id = ?').run(JSON.stringify(config), id)
+  return getBrandAsset(id)
+}
+
+function formatBrandDNA(row) {
+  return {
+    id: row.id,
+    brandName: row.brand_name,
+    toneKeywords: JSON.parse(row.tone_keywords || '[]'),
+    values: JSON.parse(row.values || '[]'),
+    styleGuide: JSON.parse(row.style_guide || '{}'),
+    personality: JSON.parse(row.personality || '{}'),
+    colorPalette: JSON.parse(row.color_palette || '[]'),
+    samplePhrases: JSON.parse(row.sample_phrases || '[]'),
+    logoData: row.logo_data,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  }
+}
+
+function formatBrandAsset(row) {
+  return {
+    id: row.id,
+    brandName: row.brand_name,
+    assetType: row.asset_type,
+    title: row.title,
+    prompt: row.prompt,
+    imageData: row.image_data,
+    config: JSON.parse(row.config || '{}'),
+    tags: JSON.parse(row.tags || '[]'),
+    metadata: JSON.parse(row.metadata || '{}'),
     createdAt: row.created_at,
   }
 }

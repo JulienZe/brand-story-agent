@@ -1,10 +1,9 @@
-import { useState, useCallback, useRef } from 'react'
+import { useState, useCallback } from 'react'
 import { ApiError } from '../services/api'
 
 export function useApi(apiFn, { onSuccess, onError } = {}) {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState(null)
-  const abortRef = useRef(null)
 
   const execute = useCallback(async (...args) => {
     setLoading(true)

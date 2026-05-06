@@ -40,7 +40,7 @@ export class ErrorBoundary extends Component {
             <p className="error-boundary-desc">
               {this.state.error?.message || '发生了未知错误'}
             </p>
-            {process.env.NODE_ENV === 'development' && this.state.errorInfo && (
+            {import.meta.env?.DEV && this.state.errorInfo && (
               <details className="error-boundary-details">
                 <summary>错误详情</summary>
                 <pre>{this.state.errorInfo.componentStack}</pre>

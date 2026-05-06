@@ -117,10 +117,10 @@ export function PageCreate({ onCreate, onNavigate, history, refineTarget }) {
           setProgress(data.progress)
           setProgressStages(prev => prev.map(s => s.status === 'active' ? { ...s, status: 'done' } : s))
         },
-        onStageText: (data) => {
-          setStreamingText(prev => prev + data.text)
+        onStageText: (chunk) => {
+          setStreamingText(prev => prev + chunk.text)
         },
-        onStageError: (data) => {
+        onStageError: () => {
           setProgressStages(prev => prev.map(s =>
             s.status === 'active' ? { ...s, status: 'error' } : s
           ))

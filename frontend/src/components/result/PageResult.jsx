@@ -3,7 +3,7 @@ import { Icon } from '../common/Icon'
 import { StoryViewer } from './StoryViewer'
 import { TEMPLATES } from '../../constants'
 
-export function PageResult({ record, onBack, onNew, onNavigate, onUpdateRecord, showToast }) {
+export function PageResult({ record, onBack, onNew, onUpdateRecord, showToast }) {
   const [currentRecord, setCurrentRecord] = useState(record)
 
   const handleResultUpdate = useCallback((updated) => {
